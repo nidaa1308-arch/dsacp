@@ -20,7 +20,9 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r requirements-dev.txt
       - name: Run DSA unit tests
-        run: pytest tests/test_dsa.py -q
+        env:
+          PYTHONPATH: .
+        run: python -m pytest tests/test_dsa.py -q
 
   frontend-build:
     runs-on: ubuntu-latest
