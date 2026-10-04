@@ -451,6 +451,59 @@ class ApiClient {
     return await res.json();
   }
 
+  async getDSASummary(): Promise<any> {
+    const isOnline = await this.checkBackend();
+    if (!isOnline) throw new Error("DSA summary unavailable: Backend server is offline.");
+    const res = await fetch(`${API_BASE}/dsa/summary`);
+    if (!res.ok) throw new Error(`DSA summary failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  async runAStarRoute(payload: {
+    graph: Record<string, [string, number][]>;
+    coords: Record<string, [number, number]>;
+    start: string;
+    goal: string;
+  }): Promise<any> {
+    const isOnline = await this.checkBackend();
+    if (!isOnline) throw new Error("A* routing unavailable: Backend server is offline.");
+    const res = await fetch(`${API_BASE}/dsa/astar-route`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`A* route failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  async queryQuadTree(payload: {
+    points: { x: number; y: number; [key: string]: any }[];
+    viewport?: [number, number, number, number];
+    capacity?: number;
+  }): Promise<any> {
+    const isOnline = await this.checkBackend();
+    if (!isOnline) throw new Error("Quadtree query unavailable: Backend server is offline.");
+    const res = await fetch(`${API_BASE}/dsa/quadtree-query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Quadtree query failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  async runAdvancedTopologyCheck(harmonizedFC: GeoJSON.FeatureCollection): Promise<any> {
+    const isOnline = await this.checkBackend();
+    if (!isOnline) throw new Error("Advanced topology check unavailable: Backend server is offline.");
+    const res = await fetch(`${API_BASE}/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ harmonized: harmonizedFC }),
+    });
+    if (!res.ok) throw new Error(`Advanced topology check failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
   async getReports(invId: string): Promise<any[]> {
     const isOnline = await this.checkBackend();
     if (!isOnline) {

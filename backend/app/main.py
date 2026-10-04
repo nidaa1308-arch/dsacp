@@ -28,6 +28,11 @@ from app.db import (
 )
 from app.revenue_data import get_revenue_records, get_revenue_record  # kept for /export/department legacy endpoint only
 from app.attribute_mapping import map_to_department, detect_schema, DEPARTMENT_SCHEMAS
+from app.dsa.kd_tree import KDTree
+from app.dsa.sweep_line import sweep_intersections
+from app.dsa.disjoint_set import conflict_zones
+from app.dsa.astar import astar_search
+from app.dsa.quadtree import QuadTree, Rect
 
 init_db()
 
@@ -1211,6 +1216,13 @@ def harmonize(req: HarmonizeRequest) -> dict[str, Any]:
     def m_to_deg(mx: float, my: float) -> tuple[float, float]:
         return mx / LON_SCALE, my / LAT_SCALE
 
+    # DSA CP extension: build a balanced KD-Tree once, instead of scanning all
+    # GNSS observations separately for every parcel.
+    gnss_kdtree = KDTree([
+        (deg_to_m(gp["lon"], gp["lat"]), gp)
+        for gp in gnss_points
+    ]) if gnss_points else None
+
     num_parcels = len(cad_features)
 
     # ── P1: Correspondence engine ────────────────────────────────────────────
@@ -1437,14 +1449,18 @@ def harmonize(req: HarmonizeRequest) -> dict[str, Any]:
 
         gnss_nearest = None
         gnss_dist_m = None
-        if gnss_points:
-            best_gd = float("inf")
-            for gp in gnss_points:
-                d = geo_distance_m((c_cad_orig[0], c_cad_orig[1]), (gp["lon"], gp["lat"]))
-                if d < best_gd:
-                    best_gd = d
-                    gnss_nearest = {**gp, "distance_to_parcel_m": round(d, 2)}
-            gnss_dist_m = round(best_gd, 2)
+        if gnss_kdtree is not None:
+            kd_result = gnss_kdtree.nearest(deg_to_m(c_cad_orig[0], c_cad_orig[1]))
+            if kd_result:
+                gp = kd_result["payload"]
+                gnss_dist_m = round(kd_result["distance"], 2)
+                gnss_nearest = {
+                    **gp,
+                    "distance_to_parcel_m": gnss_dist_m,
+                    "search_method": "KD-Tree nearest neighbour",
+                    "kd_nodes_visited": kd_result["nodes_visited"],
+                    "kd_tree_size": kd_result["tree_size"],
+                }
 
         sources_used = ["cadastral", "buildings"]
         if gnss_points:
@@ -1700,12 +1716,108 @@ def validate(req: TopologyRequest) -> dict[str, Any]:
             "correction_type": correction_type,
         })
 
+    # DSA CP extension: Sweep Line + AVL Tree detect cross-parcel boundary
+    # intersections without brute-force all-edge pair comparison.
+    sweep = sweep_intersections(features)
+    overlap_map: dict[str, list[str]] = {}
+    for pair in sweep["intersections"]:
+        a, b = pair["parcel_a"], pair["parcel_b"]
+        overlap_map.setdefault(a, []).append(b)
+        overlap_map.setdefault(b, []).append(a)
+
+    for r in results:
+        pid = r["parcel_id"].replace("parcel-", "")
+        overlaps = sorted(set(overlap_map.get(pid, [])))
+        if overlaps:
+            r["overlaps_detected"] = overlaps
+            r["overlap_risk"] = min(1.0, 0.45 + 0.1 * len(overlaps))
+            if r["status"] == "pass":
+                r["status"] = "warning"
+                r["validity"] = "Valid polygon, but boundary intersection(s) detected by Sweep Line"
+
+    # DSU groups every connected component of intersecting parcels.
+    dsu_seed = [
+        {"parcel_id": f"parcel-{r['parcel_id'].replace('parcel-','')}", "risk": "high", "residual_m": None}
+        for r in results if r.get("overlaps_detected")
+    ]
+    adjacency_pairs = [(p["parcel_a"], p["parcel_b"]) for p in sweep["intersections"]]
+    zones = conflict_zones(dsu_seed, adjacency_pairs, min_risk=("high",))
+
     return {
         "results": results,
         "n_auto_corrected": n_auto_corrected,
         "n_manual_required": n_manual_required,
         "n_valid": len([r for r in results if r["status"] == "pass"]),
         "total": len(results),
+        "sweep_line": sweep,
+        "conflict_zones": zones,
+        "dsa_used": ["Sweep Line", "AVL Tree", "Disjoint Set Union"],
+    }
+
+
+
+@app.post("/dsa/astar-route")
+async def dsa_astar_route(request: Request) -> dict[str, Any]:
+    """Run A* on a caller-supplied weighted road graph."""
+    payload = await request.json()
+    graph_data = payload.get("graph", {})
+    coords_raw = payload.get("coords", {})
+    start = str(payload.get("start", ""))
+    goal = str(payload.get("goal", ""))
+    graph: dict[str, list[tuple[str, float]]] = {}
+    for node, neighbours in graph_data.items():
+        graph[str(node)] = [
+            (str(n[0]), float(n[1])) for n in neighbours
+            if isinstance(n, (list, tuple)) and len(n) >= 2
+        ]
+    coords = {str(k): (float(v[0]), float(v[1])) for k, v in coords_raw.items()}
+    result = astar_search(graph, coords, start, goal)
+    result["algorithm"] = "A*"
+    result["heuristic"] = "Euclidean distance"
+    return result
+
+
+@app.post("/dsa/quadtree-query")
+async def dsa_quadtree_query(request: Request) -> dict[str, Any]:
+    """Index points in a Quadtree and return only points inside a viewport."""
+    payload = await request.json()
+    points = payload.get("points", [])
+    viewport = payload.get("viewport")
+    if not points:
+        return {"matches": [], "count": 0, "algorithm": "Quadtree"}
+    xs = [float(p["x"]) for p in points]
+    ys = [float(p["y"]) for p in points]
+    tree = QuadTree(Rect(min(xs), min(ys), max(xs), max(ys)), capacity=int(payload.get("capacity", 8)))
+    for p in points:
+        tree.insert((float(p["x"]), float(p["y"])), p)
+    if viewport and len(viewport) == 4:
+        area = Rect(float(viewport[0]), float(viewport[1]), float(viewport[2]), float(viewport[3]))
+    else:
+        area = tree.bounds
+    matches = tree.query(area)
+    return {
+        "matches": matches,
+        "count": len(matches),
+        "tree_stats": tree.stats(),
+        "algorithm": "Quadtree",
+    }
+
+
+@app.get("/dsa/summary")
+def dsa_summary() -> dict[str, Any]:
+    """Course-project DSA inventory. Existing R-Tree is intentionally listed separately."""
+    return {
+        "new_course_dsa": [
+            {"name": "KD-Tree", "use": "nearest GNSS/control-point lookup"},
+            {"name": "Sweep Line", "use": "parcel-boundary intersection detection"},
+            {"name": "AVL Tree", "use": "balanced active-status structure for Sweep Line"},
+            {"name": "Disjoint Set Union", "use": "connected land-conflict zones"},
+            {"name": "A*", "use": "field-verification route search"},
+            {"name": "Quadtree", "use": "map viewport spatial partitioning"},
+        ],
+        "existing_not_claimed_as_new": [
+            {"name": "SQLite R-Tree", "use": "candidate parcel/footprint retrieval"}
+        ],
     }
 
 
