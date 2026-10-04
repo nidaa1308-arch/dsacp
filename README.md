@@ -81,3 +81,19 @@ python scripts/generate_simulated_cadastral.py
 - Frontend TypeScript and Vite production build: `npm run build`
 - Backend Docker execution could not be run on this host because Docker CLI is not installed.
 - Host Python is not installed, so backend syntax was not locally compiled outside Docker.
+
+
+## DSA Course Extension
+
+The `dsa-course-extension` branch adapts BHUMI-FUSE for the DSA course project by adding six advanced DSA concepts beyond the existing syllabus-oriented graph basics:
+
+- **KD-Tree** — nearest GNSS/control-point lookup during harmonization.
+- **Sweep Line Algorithm** — parcel-boundary intersection detection.
+- **AVL Tree** — balanced active-status structure used by the Sweep Line.
+- **Disjoint Set Union (Union-Find)** — connected conflict-zone formation.
+- **A\*** — heuristic field-verification route search.
+- **Quadtree** — hierarchical spatial indexing for map viewport rendering.
+
+The original BHUMI-FUSE implementation already used a **SQLite R-Tree** for spatial candidate retrieval; it is retained but intentionally not counted as one of the six new course contributions.
+
+See [DSA_COURSE_EXTENSION.md](DSA_COURSE_EXTENSION.md) for architecture, integration points, complexity notes, and test instructions.
