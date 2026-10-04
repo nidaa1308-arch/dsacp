@@ -122,9 +122,9 @@ export const DemoMap: React.FC<DemoMapProps> = ({
         maxX: bounds.getEast(),
         maxY: bounds.getNorth(),
       }) || [];
-      const parcels = visibleItems.length
-        ? visibleItems.map((item) => item.data.feature)
-        : allParcels;
+      const parcelRecords = visibleItems.length
+        ? visibleItems.map((item) => ({ feature: item.data.feature, index: item.data.index }))
+        : allParcels.map((feature: AnyObj, index: number) => ({ feature, index }));
 
       const harmonized = currentData.harmonized?.features || [];
       const buildings = currentData.buildings?.features || [];
@@ -132,8 +132,10 @@ export const DemoMap: React.FC<DemoMapProps> = ({
       const controls = currentData.control?.features || [];
       const roads = currentData.municipal?.features || [];
 
-      // Project cadastral & drone polygons
-      const projected = parcels.map((p: AnyObj, idx: number) => {
+      // Project cadastral & drone polygons. Preserve each parcel's original
+      // dataset index so residual/building/harmonized arrays stay correctly aligned
+      // even when the Quadtree returns only a viewport subset.
+      const projected = parcelRecords.map(({ feature: p, index: idx }: { feature: AnyObj; index: number }) => {
         const ring = p.geometry.coordinates[0];
         const screenPts = ring.map((coord: number[]) => {
           const pt = map.project([coord[0], coord[1]]);
