@@ -85,15 +85,96 @@ python scripts/generate_simulated_cadastral.py
 
 ## DSA Course Extension
 
-The `dsa-course-extension` branch adapts BHUMI-FUSE for the DSA course project by adding six advanced DSA concepts beyond the existing syllabus-oriented graph basics:
+The `dsa-course-extension` branch adapts BHUMI-FUSE for the DSA course project while preserving the original SIH workflow.
 
-- **KD-Tree** — nearest GNSS/control-point lookup during harmonization.
-- **Sweep Line Algorithm** — parcel-boundary intersection detection.
-- **AVL Tree** — balanced active-status structure used by the Sweep Line.
-- **Disjoint Set Union (Union-Find)** — connected conflict-zone formation.
-- **A\*** — heuristic field-verification route search.
-- **Quadtree** — hierarchical spatial indexing for map viewport rendering.
+### Six advanced DSA concepts added
 
-The original BHUMI-FUSE implementation already used a **SQLite R-Tree** for spatial candidate retrieval; it is retained but intentionally not counted as one of the six new course contributions.
+1. **KD-Tree** — nearest GNSS/control-point lookup during harmonization.
+2. **Sweep Line Algorithm** — parcel-boundary intersection detection.
+3. **AVL Tree** — balanced active-status structure used by the Sweep Line.
+4. **Disjoint Set Union (Union-Find)** — groups connected mismatched parcels into conflict zones.
+5. **A\*** — heuristic route search for field-verification workflows.
+6. **Quadtree** — hierarchical spatial indexing for map viewport rendering.
 
-See [DSA_COURSE_EXTENSION.md](DSA_COURSE_EXTENSION.md) for architecture, integration points, complexity notes, and test instructions.
+The original BHUMI-FUSE implementation already used a **SQLite R-Tree** for spatial candidate retrieval. It is retained but intentionally **not counted** among the six new course contributions.
+
+### Where the DSA is used
+
+- `backend/app/dsa/kd_tree.py` — KD-Tree implementation.
+- `backend/app/dsa/sweep_line.py` — Sweep Line boundary-intersection engine.
+- `backend/app/dsa/avl_tree.py` — AVL Tree used as the active segment structure.
+- `backend/app/dsa/disjoint_set.py` — DSU with path compression and union by rank.
+- `backend/app/dsa/astar.py` — A* shortest-path implementation.
+- `backend/app/dsa/quadtree.py` and `frontend/src/utils/quadtree.ts` — Quadtree indexing.
+- `backend/app/main.py` — integration of KD-Tree, topology diagnostics, conflict zones, A* and Quadtree API endpoints.
+- `frontend/src/components/DemoMap.tsx` — viewport-based Quadtree filtering.
+
+### DSA API endpoints
+
+- `GET /dsa/summary` — lists the six new DSA concepts.
+- `POST /dsa/astar-route` — runs A* over a weighted road graph.
+- `POST /dsa/quadtree-query` — performs a Quadtree viewport query.
+- `POST /validate` — now also returns Sweep Line / AVL diagnostics and DSU conflict zones.
+
+### Current visible UI impact
+
+The current branch keeps the original BHUMI-FUSE interface largely unchanged. The Quadtree is already used internally by the map renderer, while KD-Tree, Sweep Line, AVL Tree, DSU and A* are primarily backend integrations. A later UI pass can expose DSA-specific cards such as KD-Tree search stats, conflict-zone cards and an A* route button.
+
+### Verification
+
+Frontend production build:
+
+```bash
+npm run build
+```
+
+Backend DSA tests:
+
+```bash
+cd backend
+python -m pytest tests/test_dsa.py -q
+```
+
+See [DSA_COURSE_EXTENSION.md](DSA_COURSE_EXTENSION.md) for architecture, complexity notes and implementation details.
+
+## Deployment for the DSA branch
+
+Deploy **`dsa-course-extension`**, not the original upstream branch.
+
+### Frontend — Vercel
+
+Repository:
+
+```text
+nidaa1308-arch/dsacp
+```
+
+Branch:
+
+```text
+dsa-course-extension
+```
+
+The existing `vercel.json` builds the Vite frontend from `frontend/`.
+
+If a separate backend is deployed, set:
+
+```text
+VITE_API_URL=<your-backend-url>
+```
+
+### Backend — Railway
+
+Use the same repository and branch. The existing `railway.json` starts:
+
+```bash
+uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+```
+
+Health endpoint:
+
+```text
+/health
+```
+
+For a complete live DSA demo, both the frontend and backend must be deployed from the **same `dsa-course-extension` branch**.
