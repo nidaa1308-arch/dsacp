@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
+import { buildParcelQuadTree } from "../utils/quadtree";
 
 type AnyObj = Record<string, any>;
 
@@ -109,7 +110,22 @@ export const DemoMap: React.FC<DemoMapProps> = ({
       const currentData = dataRef.current;
       if (!map || !currentData || !currentData.cadastral) return;
 
-      const parcels = currentData.cadastral.features || [];
+      const allParcels = currentData.cadastral.features || [];
+
+      // DSA CP extension: use a Quadtree to query only parcel centroids in the
+      // current map viewport. This keeps the rendering workload spatially local.
+      const parcelTree = buildParcelQuadTree(allParcels);
+      const bounds = map.getBounds();
+      const visibleItems = parcelTree?.query({
+        minX: bounds.getWest(),
+        minY: bounds.getSouth(),
+        maxX: bounds.getEast(),
+        maxY: bounds.getNorth(),
+      }) || [];
+      const parcels = visibleItems.length
+        ? visibleItems.map((item) => item.data.feature)
+        : allParcels;
+
       const harmonized = currentData.harmonized?.features || [];
       const buildings = currentData.buildings?.features || [];
       const residuals = currentData.residuals || [];
