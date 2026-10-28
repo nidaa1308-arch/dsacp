@@ -1,9 +1,7 @@
 name: Deploy dsa-course-extension
 
-# Runs from the pushed branch itself. Nothing is merged into main.
+# Manual only. Pick branch dsa-course-extension in "Use workflow from".
 on:
-  push:
-    branches: [dsa-course-extension]
   workflow_dispatch:
 
 concurrency:
@@ -18,6 +16,14 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
+      - name: Check secrets
+        run: |
+          for v in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID RENDER_BACKEND_URL; do
+            [ -n "${!v}" ] || { echo "::error::Missing secret $v"; exit 1; }
+          done
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          RENDER_BACKEND_URL: ${{ secrets.RENDER_BACKEND_URL }}
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -37,4 +43,5 @@ jobs:
     steps:
       - name: Trigger Render deploy of this exact commit
         run: |
+          [ -n "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ] || { echo "::error::Missing secret RENDER_DEPLOY_HOOK_URL"; exit 1; }
           curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}&ref=${{ github.sha }}"
