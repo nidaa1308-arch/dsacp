@@ -1,0 +1,121 @@
+name: DSA Test - Manual Run (dsa.test only)
+
+# This workflow is MANUAL ONLY.
+#  - The only trigger is workflow_dispatch: it never runs on push, pull_request,
+#    schedule or any other event, so it cannot affect other branches.
+#  - The `guard` job fails fast if the run is started from any branch other than
+#    dsa.test, so even a manual run from another branch does nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      run_frontend:
+        description: "Build the frontend (Vite + TypeScript)"
+        type: boolean
+        default: true
+      run_backend:
+        description: "Install backend deps and run the backend smoke test"
+        type: boolean
+        default: true
+      run_docker_build:
+        description: "Build the backend Docker image (no push)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsa-test-manual
+  cancel-in-progress: false
+
+env:
+  ALLOWED_REF: refs/heads/dsa.test
+
+jobs:
+  guard:
+    name: Guard - only dsa.test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless running on dsa.test
+        run: |
+          echo "Running on ref: ${GITHUB_REF}"
+          if [ "${GITHUB_REF}" != "${ALLOWED_REF}" ]; then
+            echo "::error::This workflow may only be run from the dsa.test branch (got ${GITHUB_REF})."
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend build
+    needs: guard
+    if: ${{ inputs.run_frontend }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dsa.test
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and build
+        run: npm run build
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  backend:
+    name: Backend smoke test
+    needs: guard
+    if: ${{ inputs.run_backend }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dsa.test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Start backend and check /health and /study-areas
+        run: bash .github/scripts/backend_smoke_test.sh
+
+  docker:
+    name: Backend Docker build
+    needs: guard
+    if: ${{ inputs.run_docker_build }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dsa.test
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: dsacp-backend:dsa-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
